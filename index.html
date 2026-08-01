@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="it">
 <head>
@@ -451,6 +452,12 @@ const I18N = {
 };
 function t(key){ return (I18N[state.settings.lang] || I18N.it)[key] || key; }
 
+/* ============ DEFAULT API KEY (optional) ============
+   Se vuoi che la key sia sempre presente anche su un browser "pulito" (senza
+   dover riscriverla dalle impostazioni), incollala qui tra le virgolette.
+   Rimane comunque sovrascrivibile dalle impostazioni dell'app in qualsiasi momento. */
+const DEFAULT_GROQ_API_KEY = "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";
+
 /* ============ STATE ============ */
 let state = {
   settings: { apiKey:'', lang:'it', theme:'dark' },
@@ -461,31 +468,47 @@ let state = {
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2));
 
 /* ============ STORAGE ============ */
+// Uses window.storage when running inside a Claude artifact (persists per-account),
+// and falls back to localStorage when the app is hosted elsewhere (GitHub Pages, Vercel, etc.)
+// where window.storage does not exist but localStorage works normally.
+const hasClaudeStorage = typeof window.storage !== 'undefined' && window.storage && typeof window.storage.get === 'function';
+const Store = {
+  async get(key){
+    if(hasClaudeStorage){
+      try{
+        const r = await window.storage.get(key);
+        return r ? r.value : null;
+      }catch(e){ return null; }
+    }
+    try{ return localStorage.getItem(key); }catch(e){ return null; }
+  },
+  async set(key, value){
+    if(hasClaudeStorage){
+      try{ await window.storage.set(key, value); return; }catch(e){ /* fall through to localStorage */ }
+    }
+    try{ localStorage.setItem(key, value); }catch(e){ /* storage unavailable, ignore */ }
+  }
+};
+
 async function loadState(){
-  try{
-    const s = await window.storage.get('settings');
-    if(s && s.value) state.settings = { ...state.settings, ...JSON.parse(s.value) };
-  }catch(e){ /* not found, keep defaults */ }
-  try{
-    const c = await window.storage.get('chats');
-    if(c && c.value) state.chats = JSON.parse(c.value);
-  }catch(e){ /* not found */ }
+  const s = await Store.get('settings');
+  if(s) { try{ state.settings = { ...state.settings, ...JSON.parse(s) }; }catch(e){} }
+  const c = await Store.get('chats');
+  if(c) { try{ state.chats = JSON.parse(c); }catch(e){} }
+  if(!state.settings.apiKey && DEFAULT_GROQ_API_KEY){
+    state.settings.apiKey = DEFAULT_GROQ_API_KEY;
+  }
   if(state.chats.length) state.activeChatId = state.chats[0].id;
   applyTheme(); applyLang();
 }
-let saveSettingsTimer = null;
 function persistSettings(){
-  clearTimeout(saveSettingsTimer);
-  saveSettingsTimer = setTimeout(async ()=>{
-    try{ await window.storage.set('settings', JSON.stringify(state.settings)); }catch(e){}
-  }, 150);
+  // Salvataggio immediato (non ritardato): la key non va persa anche chiudendo subito la pagina.
+  Store.set('settings', JSON.stringify(state.settings));
 }
 let saveChatsTimer = null;
 function persistChats(){
   clearTimeout(saveChatsTimer);
-  saveChatsTimer = setTimeout(async ()=>{
-    try{ await window.storage.set('chats', JSON.stringify(state.chats)); }catch(e){}
-  }, 150);
+  saveChatsTimer = setTimeout(()=>{ Store.set('chats', JSON.stringify(state.chats)); }, 150);
 }
 
 /* ============ THEME / LANG ============ */
